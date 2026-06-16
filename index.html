@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Battle Screen</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: black;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .container {
+    display: flex;
+    height: 100%;
+    gap: calc(10px + 1cm);
+    position: relative;
+  }
+
+  .player {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+  }
+
+  .video-box {
+    width: 90%;
+    height: 80%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #000;
+  }
+
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
+  }
+
+  #vs-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scaleX(-1);  /*鏡像*/;
+    color: white;
+    font-size: 80px;
+    font-weight: bold;
+    z-index: 10;
+    text-shadow: 0 0 20px red;
+    transition: all 0.3s ease;
+  }
+
+  .result-msg {
+    color: white;
+    font-size: 40px;
+    font-weight: bold;
+    margin-top: 10px;
+    height: 50px;
+    transform: scaleX(-1);/*鏡像*/
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div id="vs-text">VS</div>
+
+  <div class="player">
+    <div class="video-box">
+      <video id="video1" autoplay muted playsinline preload="auto"></video>
+    </div>
+    <div id="msg1" class="result-msg"></div>
+  </div>
+
+  <div class="player">
+    <div class="video-box">
+      <video id="video2" autoplay muted playsinline preload="auto"></video>
+    </div>
+    <div id="msg2" class="result-msg"></div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+const firebaseConfig = {
+  databaseURL: "https://fggame-e7e7b-default-rtdb.firebaseio.com/"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const base = "https://github.com/ppcct1235561-droid/RFIDgame/raw/main/";
+const videos = { A: base + "idle1.mp4", B: base + "idle2.mp4", C: base + "idle3.mp4" };
+
+const v1 = document.getElementById("video1");
+const v2 = document.getElementById("video2");
+const vsText = document.getElementById("vs-text");
+const msg1 = document.getElementById("msg1");
+const msg2 = document.getElementById("msg2");
+
+let battleTimeout = null;
+let resultTimeout = null;
+let currentResultSent = false; // 防止重複寫入 Firebase
+
+function updateVideo(video, char) {
+  if (!char || char === "null" || char === "") {
+    video.pause();
+    video.src = "";
+    video.style.display = "none";
+    return false;
+  }
+
+  const url = videos[char];
+  if (!url) return false;
+
+  if (!video.src.includes(url)) {
+    video.src = url + "?t=" + Date.now();
+    video.style.display = "block";
+    video.play().catch(()=>{});
+  }
+  return true;
+}
+
+// 🏆 勝負判定函式 (回傳定義代碼)
+function judge(p1, p2) {
+  if (p1 === p2) return "S"; // 平手
+  if ((p1 === 'A' && p2 === 'B') || (p1 === 'B' && p2 === 'C') || (p1 === 'C' && p2 === 'A')) return "P1";
+  return "P2";
+}
+
+const refAll = ref(db, "/");
+
+onValue(refAll, (snap) => {
+  const data = snap.val();
+  if (!data) return;
+
+  const p1 = data.player1;
+  const p2 = data.player2;
+
+  const p1Active = updateVideo(v1, p1);
+  const p2Active = updateVideo(v2, p2);
+
+  if (p1Active && p2Active) {
+    // 1. 觸發第一階段：2秒後顯示「對決」
+    if (!battleTimeout) {
+      battleTimeout = setTimeout(() => {
+        vsText.innerText = "對決";
+        vsText.style.color = "red";
+        vsText.style.fontSize = "100px";
+
+        // 2. 觸發第二階段：再過2秒（對決出現後）顯示勝負並寫入 Firebase
+        resultTimeout = setTimeout(() => {
+          const resCode = judge(p1, p2);
+          
+          // 顯示 UI
+          if (resCode === "P1") {
+            msg1.innerText = "WINNER!"; msg1.style.color = "yellow";
+            msg2.innerText = "LOSE"; msg2.style.color = "gray";
+          } else if (resCode === "P2") {
+            msg1.innerText = "LOSE"; msg1.style.color = "gray";
+            msg2.innerText = "WINNER!"; msg2.style.color = "yellow";
+          } else {
+            msg1.innerText = "DRAW"; msg2.innerText = "DRAW";
+            msg1.style.color = "white"; msg2.style.color = "white";
+          }
+
+          // 寫回 Firebase result 欄位 (只寫一次)
+          if (!currentResultSent) {
+            set(ref(db, "result"), resCode);
+            currentResultSent = true;
+          }
+        }, 2000); 
+
+      }, 2000);
+    }
+  } else {
+    // 重置所有狀態與計時器
+    if (battleTimeout) clearTimeout(battleTimeout);
+    if (resultTimeout) clearTimeout(resultTimeout);
+    battleTimeout = null;
+    resultTimeout = null;
+    currentResultSent = false;
+
+    vsText.innerText = "VS";
+    vsText.style.color = "white";
+    vsText.style.fontSize = "80px";
+    msg1.innerText = "";
+    msg2.innerText = "";
+    
+    // 清除訊號時，也可以選擇清空 Firebase 的 result
+    if (p1 === "null" || p2 === "null") {
+        set(ref(db, "result"), "");
+    }
+  }
+});
+</script>
+</body>
+</html>
